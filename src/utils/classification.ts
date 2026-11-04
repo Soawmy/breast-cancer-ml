@@ -21,6 +21,7 @@ export interface ImagingTypeResult {
 export interface ClassificationResult {
   imagingType: ImagingTypeResult;
   modelName: string;
+  modelUrl?: string;
   topClass: ClassScore;
   allScores: ClassScore[];
   description: string;
@@ -182,7 +183,8 @@ export function processScores(predictions: RawPrediction[]): { topClass: ClassSc
 export function buildClassificationResult(
   imagingType: ImagingTypeResult,
   cancerPredictions: RawPrediction[],
-  modelName: string
+  modelName: string,
+  modelUrl?: string
 ): ClassificationResult {
   const { topClass, allScores } = processScores(cancerPredictions);
   const description = getClassDescription(topClass.className);
@@ -190,6 +192,7 @@ export function buildClassificationResult(
   return {
     imagingType,
     modelName,
+    modelUrl,
     topClass,
     allScores,
     description,

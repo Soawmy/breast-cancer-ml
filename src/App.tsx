@@ -7,6 +7,7 @@ import {
   loadAllModels,
   executePipeline,
   createImageElement,
+  ModalityMode,
 } from './utils/teachableMachine';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
@@ -18,6 +19,9 @@ export default function App() {
   // Uploaded image state
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
+
+  // Modality mode: 'auto' | 'mammogram' | 'ultrasound'
+  const [modality, setModality] = useState<ModalityMode>('auto');
 
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
@@ -61,7 +65,7 @@ export default function App() {
     setPredictionStage('idle');
   };
 
-  // Run 3-model routing and inference pipeline
+  // Run routing and inference pipeline
   const handleAnalyze = async () => {
     if (!imageSrc || modelStatus !== 'ready' || isPredicting) {
       return;
@@ -69,18 +73,20 @@ export default function App() {
 
     setIsPredicting(true);
     setPredictionError(null);
-    setPredictionStage('identifying');
+    setPredictionStage(modality === 'auto' ? 'identifying' : 'classifying');
 
     try {
       // 1. Create and load HTMLImageElement for client-side tensor analysis
       const imgElement = await createImageElement(imageSrc);
 
-      // 2. Execute routing pipeline:
-      //    - Model 3 determines Ultrasound vs Mammogram
-      //    - Routes image to Model 1 (Ultrasound BUSI) or Model 2 (Mammogram AISSLab)
-      const result = await executePipeline(imgElement, (stage) => {
-        setPredictionStage(stage);
-      });
+      // 2. Execute pipeline with selected modality (auto, mammogram, or ultrasound)
+      const result = await executePipeline(
+        imgElement,
+        (stage) => {
+          setPredictionStage(stage);
+        },
+        modality
+      );
 
       setPredictionResult(result);
     } catch (err: any) {
@@ -140,6 +146,8 @@ export default function App() {
                     isModelReady={modelStatus === 'ready'}
                     isPredicting={isPredicting}
                     predictionStage={predictionStage}
+                    modality={modality}
+                    onModalityChange={setModality}
                     onAnalyze={handleAnalyze}
                     result={predictionResult}
                     onTryAnother={handleRemoveImage}
@@ -162,6 +170,8 @@ export default function App() {
                   isModelReady={modelStatus === 'ready'}
                   isPredicting={isPredicting}
                   predictionStage={predictionStage}
+                  modality={modality}
+                  onModalityChange={setModality}
                   onAnalyze={handleAnalyze}
                   result={null}
                   onTryAnother={handleRemoveImage}

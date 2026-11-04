@@ -1,16 +1,17 @@
 import {
   RawPrediction,
   ClassificationResult,
+  ImagingTypeResult,
   determineImagingType,
   buildClassificationResult,
 } from './classification';
 
 export const MODEL_URLS = {
-  // Model 1: Breast Ultrasound Classifier (BUSI)
-  ultrasound: 'https://teachablemachine.withgoogle.com/models/rB0NEZ0GJ/',
-  // Model 2: Breast Mammogram Classifier (AISSLab)
-  mammogram: 'https://teachablemachine.withgoogle.com/models/avy5UvxeG/',
-  // Model 3: Imaging Type Classifier
+  // Breast Ultrasound Classifier
+  ultrasound: 'https://teachablemachine.withgoogle.com/models/KkUeH33bv/',
+  // Breast Mammogram Classifier
+  mammogram: 'https://teachablemachine.withgoogle.com/models/z8kfp45Hr/',
+  // Imaging Type Classifier
   imagingType: 'https://teachablemachine.withgoogle.com/models/4J1sLOtpZ/',
 } as const;
 
@@ -89,11 +90,11 @@ async function ensureLibrariesLoaded(): Promise<void> {
   };
 
   if (!window.tf) {
-    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js', 'tfjs-cdn');
+    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js', 'tfjs-cdn');
   }
   if (!window.tmImage) {
     await loadScript(
-      'https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js',
+      'https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js',
       'tm-image-cdn'
     );
   }
@@ -180,10 +181,51 @@ export async function loadAllModels(): Promise<{
 }
 
 /**
+ * Exact canvas preprocessing matching Google Teachable Machine's preview handler.
+ * Centers, square-crops, and draws the image onto a 224x224 canvas element.
+ */
+export function prepareTeachableMachineCanvas(
+  image: HTMLImageElement,
+  size = 224
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+
+  if (!width || !height) {
+    return canvas;
+  }
+
+  // Exact function u implementation from Google Teachable Machine:
+  const min = Math.min(width, height);
+  const scale = size / min;
+  const scaledW = Math.ceil(width * scale);
+  const scaledH = Math.ceil(height * scale);
+  const dx = scaledW - size;
+  const dy = scaledH - size;
+
+  ctx.drawImage(
+    image,
+    -1 * Math.floor(dx / 2),
+    -1 * Math.floor(dy / 2),
+    scaledW,
+    scaledH
+  );
+
+  return canvas;
+}
+
+/**
  * Executes a prediction on an HTMLImageElement using the specified loaded model bundle
  */
 async function runInference(bundle: LoadedModelBundle, imageElement: HTMLImageElement): Promise<RawPrediction[]> {
-  const rawPredictions = await bundle.model.predict(imageElement);
+  const canvas = prepareTeachableMachineCanvas(imageElement, bundle.metadata.imageSize || 224);
+  const rawPredictions = await bundle.model.predict(canvas);
   return rawPredictions.map((item: any, index: number) => ({
     className: String(item.className || bundle.metadata.labels[index] || `Class ${index + 1}`),
     probability: Number(item.probability ?? 0),
@@ -214,45 +256,74 @@ export async function predictMammogram(imageElement: HTMLImageElement): Promise<
   return runInference(models.mammogram, imageElement);
 }
 
+export type ModalityMode = 'auto' | 'mammogram' | 'ultrasound';
+
 /**
- * Orchestrates the full 3-model routing pipeline:
- * 1. Sends image to Model 3 to identify imaging type (Ultrasound or Mammogram).
- * 2. If unrecognized or ambiguous, throws an informative error without running cancer models.
- * 3. Routes image to Model 1 (if Ultrasound) or Model 2 (if Mammogram).
- * 4. Returns formatted classification result with imaging type, top class, scores, and short description.
+ * Orchestrates classification:
+ * - If modality is 'mammogram', routes directly to the Mammogram model (z8kfp45Hr).
+ * - If modality is 'ultrasound', routes directly to the Ultrasound model (KkUeH33bv).
+ * - If modality is 'auto', queries Model 3 (4J1sLOtpZ) to determine modality, then routes.
  */
 export async function executePipeline(
   imageElement: HTMLImageElement,
-  onStageChange?: (stage: 'identifying' | 'classifying') => void
+  onStageChange?: (stage: 'identifying' | 'classifying') => void,
+  modality: ModalityMode = 'auto'
 ): Promise<ClassificationResult> {
-  // Step 1 & 2: Identify imaging type via Model 3
-  onStageChange?.('identifying');
-  const typePredictions = await predictImagingType(imageElement);
-  const typeResult = determineImagingType(typePredictions);
-
-  if (!typeResult) {
-    throw new Error(
-      'Unable to confidently identify this image as a breast ultrasound or mammogram. Please upload a supported breast ultrasound or mammogram.'
-    );
-  }
-
-  // Step 3: Route to the designated model
-  onStageChange?.('classifying');
+  let typeResult: ImagingTypeResult;
   let cancerPredictions: RawPrediction[];
   let modelName: string;
+  let modelUrl: string;
 
-  if (typeResult.imagingType === 'Ultrasound') {
-    cancerPredictions = await predictUltrasound(imageElement);
-    modelName = 'Breast Ultrasound Classifier (BUSI)';
-  } else if (typeResult.imagingType === 'Mammogram') {
+  if (modality === 'mammogram') {
+    onStageChange?.('classifying');
     cancerPredictions = await predictMammogram(imageElement);
-    modelName = 'Breast Mammogram Classifier (AISSLab)';
+    typeResult = {
+      imagingType: 'Mammogram',
+      confidence: 1.0,
+      percentage: 100,
+      formattedPercentage: 'Mammogram (Direct Selection)',
+    };
+    modelName = 'Breast Mammogram Classifier';
+    modelUrl = MODEL_URLS.mammogram;
+  } else if (modality === 'ultrasound') {
+    onStageChange?.('classifying');
+    cancerPredictions = await predictUltrasound(imageElement);
+    typeResult = {
+      imagingType: 'Ultrasound',
+      confidence: 1.0,
+      percentage: 100,
+      formattedPercentage: 'Ultrasound (Direct Selection)',
+    };
+    modelName = 'Breast Ultrasound Classifier';
+    modelUrl = MODEL_URLS.ultrasound;
   } else {
-    throw new Error('Unsupported imaging modality identified.');
+    // Step 1: Auto-identify imaging type via Model 3
+    onStageChange?.('identifying');
+    const typePredictions = await predictImagingType(imageElement);
+    const autoType = determineImagingType(typePredictions);
+
+    if (!autoType) {
+      throw new Error(
+        'Auto-detection was inconclusive. Please select "Mammogram" or "Ultrasound" above to classify directly with the designated model.'
+      );
+    }
+    typeResult = autoType;
+
+    // Step 2: Route to the designated model
+    onStageChange?.('classifying');
+    if (typeResult.imagingType === 'Ultrasound') {
+      cancerPredictions = await predictUltrasound(imageElement);
+      modelName = 'Breast Ultrasound Classifier';
+      modelUrl = MODEL_URLS.ultrasound;
+    } else {
+      cancerPredictions = await predictMammogram(imageElement);
+      modelName = 'Breast Mammogram Classifier';
+      modelUrl = MODEL_URLS.mammogram;
+    }
   }
 
-  // Step 4: Build result with description
-  return buildClassificationResult(typeResult, cancerPredictions, modelName);
+  // Step 3: Build result with description and active model URL
+  return buildClassificationResult(typeResult, cancerPredictions, modelName, modelUrl);
 }
 
 /**
@@ -262,7 +333,18 @@ export function createImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
+    img.onload = async () => {
+      if ('decode' in img) {
+        try {
+          await img.decode();
+        } catch {
+          // ignore decode errors on unsupported formats
+        }
+      }
+      img.width = img.naturalWidth;
+      img.height = img.naturalHeight;
+      resolve(img);
+    };
     img.onerror = () => reject(new Error('Failed to load image for analysis.'));
     img.src = src;
   });

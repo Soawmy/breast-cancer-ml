@@ -92,9 +92,9 @@ test('buildClassificationResult constructs full result object', () => {
     { className: 'malignant', probability: 0.05 },
   ];
 
-  const full = buildClassificationResult(typeRes, cancerPreds, 'Breast Ultrasound Classifier (BUSI)');
+  const full = buildClassificationResult(typeRes, cancerPreds, 'Breast Ultrasound Classifier');
   assert.equal(full.imagingType.imagingType, 'Ultrasound');
-  assert.equal(full.modelName, 'Breast Ultrasound Classifier (BUSI)');
+  assert.equal(full.modelName, 'Breast Ultrasound Classifier');
   assert.equal(full.topClass.className, 'benign');
   assert.match(full.description, /^A benign breast finding/);
 });
