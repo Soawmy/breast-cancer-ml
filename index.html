@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Breast Imaging Classifier — Ultrasound &amp; Mammogram</title>
+    <meta
+      name="description"
+      content="Clean, minimal image classification tool for breast ultrasound and mammogram images powered by Google Teachable Machine."
+    />
+    <meta property="og:title" content="Breast Imaging Classifier — Ultrasound &amp; Mammogram" />
+    <meta
+      property="og:description"
+      content="Clean, minimal image classification tool for breast ultrasound and mammogram images powered by Google Teachable Machine."
+    />
+
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- TensorFlow.js and Google Teachable Machine Image Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  </head>
+  <body class="bg-neutral-50 text-neutral-900 antialiased min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

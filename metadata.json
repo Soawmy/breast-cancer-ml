@@ -1,0 +1,6 @@
+{
+  "name": "BreastScan AI",
+  "description": "Educational breast ultrasound image classification tool powered by Google Teachable Machine and TensorFlow.js running real-time on-device inference.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
