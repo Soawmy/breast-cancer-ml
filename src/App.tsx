@@ -1,18 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { ImageWorkspace } from './components/ImageWorkspace';
 import { PredictionSection } from './components/PredictionSection';
-import { ClassificationResult } from './utils/classification';
+import { PipelineDiagramSection } from './components/PipelineDiagramSection';
+import { ModelsUsedSection } from './components/ModelsUsedSection';
+import { PipelineOutcome } from './utils/classification';
 import {
-  loadAllModels,
+  loadUniversalModel,
   executePipeline,
   createImageElement,
-  ModalityMode,
+  PipelineProgress,
 } from './utils/teachableMachine';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
 export default function App() {
-  // Model state
+  // Universal model startup state
   const [modelStatus, setModelStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [modelErrorMessage, setModelErrorMessage] = useState<string | null>(null);
 
@@ -20,116 +22,132 @@ export default function App() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
-  // Modality mode: 'auto' | 'mammogram' | 'ultrasound'
-  const [modality, setModality] = useState<ModalityMode>('auto');
-
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
-  const [predictionStage, setPredictionStage] = useState<'idle' | 'identifying' | 'classifying'>('idle');
-  const [predictionResult, setPredictionResult] = useState<ClassificationResult | null>(null);
+  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress>({ stage: 'idle' });
+  const [pipelineOutcome, setPipelineOutcome] = useState<PipelineOutcome | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
 
-  // Load all three Teachable Machine models on initial mount
-  const initializeModels = async () => {
+  // Synchronous guards to prevent duplicate/concurrent inference requests
+  const isAnalyzingRef = useRef(false);
+  const runIdRef = useRef(0);
+
+  // Load ONLY the Universal Medical Imaging Classifier on initial mount.
+  // Specialized models are lazy-loaded and cached on demand when routed.
+  const initializeUniversalModel = async () => {
     setModelStatus('loading');
     setModelErrorMessage(null);
     try {
-      await loadAllModels();
+      await loadUniversalModel();
       setModelStatus('ready');
-    } catch (err: any) {
-      console.error('Failed to load Teachable Machine models:', err);
+    } catch (err: unknown) {
+      console.error('Failed to load Universal Medical Imaging Classifier:', err);
       setModelStatus('error');
-      setModelErrorMessage(err.message || 'Failed to load model weights. Please check your internet connection.');
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Failed to load universal classifier weights. Please check your internet connection.';
+      setModelErrorMessage(message);
     }
   };
 
   useEffect(() => {
-    initializeModels();
+    void initializeUniversalModel();
   }, []);
 
   // Handle selecting or dropping an image
   const handleImageSelected = (file: File, dataUrl: string) => {
+    if (isAnalyzingRef.current) return;
+    runIdRef.current += 1;
     setImageFile(file);
     setImageSrc(dataUrl);
-    // Clear previous predictions when a new image is selected
-    setPredictionResult(null);
+    setPipelineOutcome(null);
     setPredictionError(null);
+    setPipelineProgress({ stage: 'idle' });
   };
 
-  // Remove active image
+  // Remove active image and reset state
   const handleRemoveImage = () => {
+    if (isAnalyzingRef.current) return;
+    runIdRef.current += 1;
     setImageSrc(null);
     setImageFile(null);
-    setPredictionResult(null);
+    setPipelineOutcome(null);
     setPredictionError(null);
-    setPredictionStage('idle');
+    setPipelineProgress({ stage: 'idle' });
   };
 
-  // Run routing and inference pipeline
-  const handleAnalyze = async () => {
-    if (!imageSrc || modelStatus !== 'ready' || isPredicting) {
+  // Run universal-first two-stage routing and inference pipeline
+  const runAnalysis = async () => {
+    if (!imageSrc || modelStatus !== 'ready' || isAnalyzingRef.current) {
       return;
     }
 
+    isAnalyzingRef.current = true;
+    const activeRunId = ++runIdRef.current;
+
     setIsPredicting(true);
     setPredictionError(null);
-    setPredictionStage(modality === 'auto' ? 'identifying' : 'classifying');
+    setPipelineProgress({ stage: 'identifying' });
 
     try {
-      // 1. Create and load HTMLImageElement for client-side tensor analysis
       const imgElement = await createImageElement(imageSrc);
+      const outcome = await executePipeline(imgElement, (progress) => {
+        if (runIdRef.current === activeRunId) {
+          setPipelineProgress(progress);
+        }
+      });
 
-      // 2. Execute pipeline with selected modality (auto, mammogram, or ultrasound)
-      const result = await executePipeline(
-        imgElement,
-        (stage) => {
-          setPredictionStage(stage);
-        },
-        modality
-      );
-
-      setPredictionResult(result);
-    } catch (err: any) {
-      console.error('Prediction failed:', err);
-      setPredictionError(
-        err.message || 'An error occurred while analyzing the image. Please try again.'
-      );
+      if (runIdRef.current === activeRunId) {
+        setPipelineOutcome(outcome);
+      }
+    } catch (err: unknown) {
+      console.error('Prediction pipeline failed:', err);
+      if (runIdRef.current === activeRunId) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'An error occurred while analyzing the image. Please try again.';
+        setPredictionError(message);
+        setPipelineOutcome(null);
+      }
     } finally {
-      setIsPredicting(false);
-      setPredictionStage('idle');
+      isAnalyzingRef.current = false;
+      if (runIdRef.current === activeRunId) {
+        setIsPredicting(false);
+        setPipelineProgress({ stage: 'idle' });
+      }
     }
   };
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col justify-between">
       <div>
-        {/* Header */}
         <Header modelStatus={modelStatus} />
 
-        {/* Main Workspace */}
         <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center">
-          {/* Model Loading Error Alert */}
           {modelStatus === 'error' && (
-            <div className="w-full mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm flex items-center justify-between gap-4">
+            <div
+              role="alert"
+              className="w-full mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm flex items-center justify-between gap-4"
+            >
               <div className="flex items-center gap-2.5">
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
                 <span>{modelErrorMessage}</span>
               </div>
               <button
                 type="button"
-                onClick={initializeModels}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white border border-red-200 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors shrink-0 shadow-sm"
+                onClick={initializeUniversalModel}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white border border-red-200 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors shrink-0 shadow-xs cursor-pointer whitespace-nowrap"
               >
-                <RefreshCw className="h-3 w-3" />
-                Retry
+                <RefreshCw className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span>Retry</span>
               </button>
             </div>
           )}
 
-          {/* Centered workspace container */}
-          <div className="w-full bg-white border border-neutral-200 rounded-lg p-6 sm:p-8 shadow-sm">
-            {predictionResult ? (
-              /* Desktop: Balanced 2-column layout with preview and results */
+          <div className="w-full bg-white border border-neutral-200 rounded-lg p-6 sm:p-8 shadow-xs">
+            {pipelineOutcome ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                 <div className="w-full">
                   <ImageWorkspace
@@ -145,18 +163,15 @@ export default function App() {
                     hasImage={Boolean(imageSrc)}
                     isModelReady={modelStatus === 'ready'}
                     isPredicting={isPredicting}
-                    predictionStage={predictionStage}
-                    modality={modality}
-                    onModalityChange={setModality}
-                    onAnalyze={handleAnalyze}
-                    result={predictionResult}
+                    progress={pipelineProgress}
+                    onAnalyze={runAnalysis}
+                    outcome={pipelineOutcome}
                     onTryAnother={handleRemoveImage}
                     predictionError={predictionError}
                   />
                 </div>
               </div>
             ) : (
-              /* Single column centered workspace before prediction */
               <div className="max-w-xl mx-auto flex flex-col gap-6">
                 <ImageWorkspace
                   imageSrc={imageSrc}
@@ -169,11 +184,9 @@ export default function App() {
                   hasImage={Boolean(imageSrc)}
                   isModelReady={modelStatus === 'ready'}
                   isPredicting={isPredicting}
-                  predictionStage={predictionStage}
-                  modality={modality}
-                  onModalityChange={setModality}
-                  onAnalyze={handleAnalyze}
-                  result={null}
+                  progress={pipelineProgress}
+                  onAnalyze={runAnalysis}
+                  outcome={null}
                   onTryAnother={handleRemoveImage}
                   predictionError={predictionError}
                 />
@@ -181,7 +194,9 @@ export default function App() {
             )}
           </div>
 
-          {/* Short medical disclaimer below workspace */}
+          <PipelineDiagramSection />
+          <ModelsUsedSection />
+
           <p className="text-center text-xs text-neutral-500 mt-8">
             For educational and research purposes only. Not intended for medical diagnosis.
           </p>
